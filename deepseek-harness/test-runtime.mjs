@@ -51,7 +51,7 @@ test('embedded PDF worker initializes its own Iterator helpers', async t => {
   assert.equal(result.ok, true)
 })
 
-test('Caddy forwards valid settings requests and rejects cross-site API requests', { timeout: 60000 }, async t => {
+for (const authEnabled of ['ON', 'OFF']) test(`Caddy auth ${authEnabled} forwards valid settings requests and rejects cross-site API requests`, { timeout: 60000 }, async t => {
   const caddy = process.env.CADDY_BINARY ?? 'caddy'
   const directory = await mkdtemp(join(tmpdir(), 'dsh-proxy-test-'))
   t.after(() => rm(directory, { recursive: true, force: true }))
@@ -75,12 +75,13 @@ test('Caddy forwards valid settings requests and rejects cross-site API requests
   const password = 'dsh-test-password'
   const hash = spawnSync(caddy, ['hash-password', '--algorithm', 'argon2id', '--plaintext', password], { encoding: 'utf8' })
   assert.equal(hash.status, 0, hash.error?.message ?? hash.stderr)
+  const authDirective = authEnabled === 'ON' ? `basic_auth argon2id {\n  test ${hash.stdout.trim()}\n}` : ''
   const config = (await readFile(process.env.DSH_CADDYFILE ?? '/etc/caddy/Caddyfile', 'utf8'))
     .replaceAll(':8443', `:${port}`).replaceAll('127.0.0.1:3080', `127.0.0.1:${backendPort}`)
   const configPath = join(directory, 'Caddyfile')
   await writeFile(configPath, config)
   const processCaddy = spawn(caddy, ['run', '--config', configPath, '--adapter', 'caddyfile'], {
-    env: { ...process.env, CADDY_ACCESS_HOST: '127.0.0.1', DSH_AUTH_USERNAME: 'test', DSH_AUTH_PASSWORD_HASH: hash.stdout.trim(), XDG_DATA_HOME: directory, XDG_CONFIG_HOME: directory },
+    env: { ...process.env, CADDY_ACCESS_HOST: '127.0.0.1', DSH_AUTH_DIRECTIVE: authDirective, XDG_DATA_HOME: directory, XDG_CONFIG_HOME: directory },
     stdio: ['ignore', 'ignore', 'pipe'],
   })
   let logs = ''
@@ -125,6 +126,6 @@ test('Caddy forwards valid settings requests and rejects cross-site API requests
   }
   // Caddy can return an empty 200 for unmatched hosts; no request may reach DSH.
   assert.equal((await request('/api/settings/update', { Host: 'attacker.invalid', Origin: 'https://attacker.invalid' })).body, '')
-  assert.equal((await request('/api/settings/describe', {}, false)).status, 401)
   assert.equal(forwarded, beforeRejected, 'rejected requests must never reach DSH')
+  assert.equal((await request('/api/settings/describe', {}, false)).status, authEnabled === 'ON' ? 401 : 200)
 })

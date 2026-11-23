@@ -9,9 +9,7 @@ https://{$CADDY_ACCESS_HOST}:8443 {
 	tls internal
 	encode zstd gzip
 
-	basic_auth argon2id {
-		{$DSH_AUTH_USERNAME} {$DSH_AUTH_PASSWORD_HASH}
-	}
+	{$DSH_AUTH_DIRECTIVE}
 
 	header {
 		X-Content-Type-Options "nosniff"

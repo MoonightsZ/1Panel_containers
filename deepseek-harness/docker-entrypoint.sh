@@ -11,12 +11,19 @@ is_access_host() {
   ' "$1"
 }
 
+is_auth_setting() {
+  [[ "$1" == ON || "$1" == OFF ]]
+}
+
 if [[ "${1:-}" == "--self-test" ]]; then
   is_access_host 203.0.113.10
   is_access_host dsh.example.com
   ! is_access_host https://dsh.example.com
   ! is_access_host 203.0.113.10:10443
   ! is_access_host 203.0.113.999
+  is_auth_setting ON
+  is_auth_setting OFF
+  ! is_auth_setting disabled
   exit 0
 fi
 
@@ -25,6 +32,7 @@ printf '\033[1;33m%s\033[0m\n' 'For support or issue discussion, please visit:'
 printf '\033[1;36m%s\033[0m\n' 'https://github.com/1Panel-dev/1Panel/discussions'
 
 access_host="${HTTPS_ACCESS_HOST:-}"
+auth_enabled="${DSH_AUTH_ENABLED:-ON}"
 auth_username="${DSH_AUTH_USERNAME:-}"
 auth_password="${DSH_AUTH_PASSWORD:-}"
 
@@ -33,18 +41,28 @@ if ! is_access_host "$access_host"; then
   exit 1
 fi
 
-if [[ ! "$auth_username" =~ ^[A-Za-z0-9._-]+$ ]]; then
-  printf 'DSH_AUTH_USERNAME must contain only letters, numbers, dot, underscore, or hyphen.\n' >&2
+if ! is_auth_setting "$auth_enabled"; then
+  printf 'DSH_AUTH_ENABLED must be ON or OFF.\n' >&2
   exit 1
 fi
 
-if (( ${#auth_password} < 12 )); then
-  printf 'DSH_AUTH_PASSWORD must contain at least 12 characters.\n' >&2
-  exit 1
+auth_directive=""
+if [[ "$auth_enabled" == ON ]]; then
+  if [[ ! "$auth_username" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    printf 'DSH_AUTH_USERNAME must contain only letters, numbers, dot, underscore, or hyphen.\n' >&2
+    exit 1
+  fi
+
+  if (( ${#auth_password} < 12 )); then
+    printf 'DSH_AUTH_PASSWORD must contain at least 12 characters.\n' >&2
+    exit 1
+  fi
+
+  password_hash="$(caddy hash-password --algorithm argon2id --plaintext "$auth_password")"
+  printf -v auth_directive 'basic_auth argon2id {\n  %s %s\n}' "$auth_username" "$password_hash"
 fi
 
-password_hash="$(caddy hash-password --algorithm argon2id --plaintext "$auth_password")"
-unset HTTPS_ACCESS_HOST DSH_AUTH_USERNAME DSH_AUTH_PASSWORD auth_password
+unset HTTPS_ACCESS_HOST DSH_AUTH_ENABLED DSH_AUTH_USERNAME DSH_AUTH_PASSWORD auth_password
 
 install -d -m 0700 -o node -g node /data/dsh /data/dsh/home
 install -d -m 0750 -o node -g node /workspace
@@ -94,8 +112,7 @@ gosu caddy env \
   XDG_DATA_HOME=/data/caddy \
   XDG_CONFIG_HOME=/data/caddy/config \
   CADDY_ACCESS_HOST="$access_host" \
-  DSH_AUTH_USERNAME="$auth_username" \
-  DSH_AUTH_PASSWORD_HASH="$password_hash" \
+  DSH_AUTH_DIRECTIVE="$auth_directive" \
   caddy run --config /etc/caddy/Caddyfile --adapter caddyfile &
 caddy_pid=$!
 pids+=("$caddy_pid")

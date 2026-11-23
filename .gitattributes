@@ -1,0 +1,2 @@
+deepseek-harness/docker-entrypoint.sh text eol=lf
+deepseek-harness/dsh text eol=lf
